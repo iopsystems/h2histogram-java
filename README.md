@@ -33,7 +33,7 @@ Maven:
 
 ```xml
 <dependency>
-  <groupId>com.iopsystems</groupId>
+  <groupId>systems.iop</groupId>
   <artifactId>h2histogram</artifactId>
   <version>0.1.0</version>
 </dependency>
@@ -42,7 +42,7 @@ Maven:
 Gradle:
 
 ```kotlin
-implementation("com.iopsystems:h2histogram:0.1.0")
+implementation("systems.iop:h2histogram:0.1.0")
 ```
 
 The library requires Java 17 or later and has no runtime dependencies.
@@ -50,9 +50,9 @@ The library requires Java 17 or later and has no runtime dependencies.
 ## Quick start
 
 ```java
-import com.iopsystems.h2histogram.Bucket;
-import com.iopsystems.h2histogram.Histogram;
-import com.iopsystems.h2histogram.SparseHistogram;
+import systems.iop.h2histogram.Bucket;
+import systems.iop.h2histogram.Histogram;
+import systems.iop.h2histogram.SparseHistogram;
 
 Histogram h = new Histogram(7, 64); // groupingPower, maxValuePower
 
@@ -79,8 +79,8 @@ For a snapshot you'll query many times, convert to a `CumulativeHistogram`
 precomputes a midpoint-estimated mean:
 
 ```java
-import com.iopsystems.h2histogram.BucketWithQuantiles;
-import com.iopsystems.h2histogram.CumulativeHistogram;
+import systems.iop.h2histogram.BucketWithQuantiles;
+import systems.iop.h2histogram.CumulativeHistogram;
 
 CumulativeHistogram c = h.toCumulative(); // read-only; also SparseHistogram.toCumulative()
 Bucket b = c.percentile(0.99).orElseThrow(); // O(log n) binary search (individual count)

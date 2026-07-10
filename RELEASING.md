@@ -35,14 +35,11 @@ Release is published.
 
 ### 1. Namespace verification
 
-The `com.iopsystems` namespace must be verified once in the
+The `systems.iop` namespace (the reverse-DNS form of the `iop.systems`
+domain) must be verified once in the
 [Central portal](https://central.sonatype.com) (log in → **Namespaces** → add
-`com.iopsystems`). Verification for a `com.*` namespace is via a DNS TXT record
-on `iopsystems.com`; the portal shows the exact record to create.
-
-(Alternative: the `io.github.iopsystems` namespace can be verified with a
-temporary public GitHub repository instead of DNS, but the `groupId` in
-`pom.xml` would need to change to match.)
+`systems.iop`). Verification is via a DNS TXT record on `iop.systems`; the
+portal shows the exact record to create.
 
 ### 2. Portal user token
 

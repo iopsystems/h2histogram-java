@@ -1,4 +1,4 @@
-package com.iopsystems.h2histogram;
+package systems.iop.h2histogram;
 
 /**
  * Pairs a requested percentile with the {@link Bucket} it resolves to.

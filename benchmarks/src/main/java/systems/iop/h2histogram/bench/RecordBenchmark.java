@@ -1,7 +1,7 @@
-package com.iopsystems.h2histogram.bench;
+package systems.iop.h2histogram.bench;
 
-import com.iopsystems.h2histogram.Config;
-import com.iopsystems.h2histogram.Histogram;
+import systems.iop.h2histogram.Config;
+import systems.iop.h2histogram.Histogram;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.Benchmark;
