@@ -139,21 +139,8 @@ mvn verify
 
 ## Releasing
 
-Releases are published to Maven Central. To cut a release:
-
-1. **Land your changes on `main`** via a pull request.
-2. **Set the release version** (drop the `-SNAPSHOT` suffix) in
-   [`pom.xml`](pom.xml), e.g. `0.1.0`, and merge that change.
-3. **Tag and push** a `vX.Y.Z` tag on `main`:
-
-   ```bash
-   git checkout main && git pull
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-
-4. **Deploy** with `mvn -Prelease deploy` using Sonatype (Maven Central)
-   credentials, then bump `pom.xml` back to the next `-SNAPSHOT` version.
+Releases are published to Maven Central automatically via GitHub Actions when
+a GitHub Release is published. See [RELEASING.md](RELEASING.md) for the steps.
 
 ## License
 
