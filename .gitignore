@@ -33,3 +33,7 @@ target/
 .classpath
 .project
 .settings/
+
+# Benchmarks
+benchmarks/dependency-reduced-pom.xml
+benchmarks/results.json
