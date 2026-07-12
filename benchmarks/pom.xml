@@ -6,7 +6,7 @@
 
   <groupId>systems.iop</groupId>
   <artifactId>h2histogram-benchmarks</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>h2histogram-benchmarks</name>
@@ -22,7 +22,7 @@
     <dependency>
       <groupId>systems.iop</groupId>
       <artifactId>h2histogram</artifactId>
-      <version>0.1.0</version>
+      <version>0.1.1-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>org.hdrhistogram</groupId>
