@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.iopsystems</groupId>
+  <groupId>systems.iop</groupId>
   <artifactId>h2histogram</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
   <packaging>jar</packaging>
 
   <name>h2histogram</name>
@@ -22,6 +22,14 @@
       <url>https://opensource.org/licenses/MIT</url>
     </license>
   </licenses>
+
+  <developers>
+    <developer>
+      <name>IOP Systems</name>
+      <organization>IOP Systems</organization>
+      <organizationUrl>https://iop.systems</organizationUrl>
+    </developer>
+  </developers>
 
   <scm>
     <connection>scm:git:https://github.com/iopsystems/h2histogram-java.git</connection>
@@ -84,4 +92,46 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Publishing to Maven Central: mvn -Prelease deploy (see RELEASING.md) -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.4</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+                <configuration>
+                  <gpgArguments>
+                    <arg>--pinentry-mode</arg>
+                    <arg>loopback</arg>
+                  </gpgArguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.7.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+              <waitUntil>published</waitUntil>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

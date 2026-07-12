@@ -1,4 +1,4 @@
-package com.iopsystems.h2histogram;
+package systems.iop.h2histogram;
 
 /**
  * An immutable bucketing configuration.

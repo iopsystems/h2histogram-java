@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.iopsystems</groupId>
+  <groupId>systems.iop</groupId>
   <artifactId>h2histogram-benchmarks</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
   <packaging>jar</packaging>
 
   <name>h2histogram-benchmarks</name>
@@ -20,9 +20,9 @@
 
   <dependencies>
     <dependency>
-      <groupId>com.iopsystems</groupId>
+      <groupId>systems.iop</groupId>
       <artifactId>h2histogram</artifactId>
-      <version>0.1.0-SNAPSHOT</version>
+      <version>0.1.0</version>
     </dependency>
     <dependency>
       <groupId>org.hdrhistogram</groupId>

@@ -1,4 +1,4 @@
-package com.iopsystems.h2histogram;
+package systems.iop.h2histogram;
 
 /**
  * Helpers for treating Java {@code long} values as unsigned 64-bit integers

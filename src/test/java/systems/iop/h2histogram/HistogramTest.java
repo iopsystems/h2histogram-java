@@ -1,4 +1,4 @@
-package com.iopsystems.h2histogram;
+package systems.iop.h2histogram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;

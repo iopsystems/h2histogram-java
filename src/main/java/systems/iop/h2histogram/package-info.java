@@ -26,4 +26,4 @@
  * Java {@code long}s with unsigned semantics, so the full {@code u64} range is
  * supported, exactly like the Rust crate.
  */
-package com.iopsystems.h2histogram;
+package systems.iop.h2histogram;
