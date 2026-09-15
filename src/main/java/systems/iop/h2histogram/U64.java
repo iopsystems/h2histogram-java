@@ -14,6 +14,38 @@ final class U64 {
 
     private static final double TWO_POW_63 = 9.223372036854775808E18;
 
+    /** Adds unsigned counts without allowing a wrapped result. */
+    static long checkedAdd(long a, long b) {
+        long result = a + b;
+        if (Long.compareUnsigned(result, a) < 0) {
+            throw new ArithmeticException("unsigned count overflow");
+        }
+        return result;
+    }
+
+    static long checkedTotal(long[] counts) {
+        long total = 0;
+        for (long count : counts) {
+            total = checkedAdd(total, count);
+        }
+        return total;
+    }
+
+    static void validatePercentile(double p) {
+        if (!(p >= 0.0 && p <= 1.0)) {
+            throw new IllegalArgumentException("percentiles must be in the range [0.0, 1.0], got " + p);
+        }
+    }
+
+    static void validateOutput(double[] percentiles, Bucket[] output) {
+        if (output.length < percentiles.length) {
+            throw new IllegalArgumentException("output must have room for every percentile");
+        }
+        for (double p : percentiles) {
+            validatePercentile(p);
+        }
+    }
+
     /** Converts an unsigned 64-bit value to the nearest {@code double}. */
     static double toDouble(long value) {
         if (value >= 0) {
@@ -39,6 +71,7 @@ final class U64 {
         if (target < 1.0) {
             return 1;
         }
-        return fromDouble(target);
+        long count = fromDouble(target);
+        return Long.compareUnsigned(count, total) > 0 ? total : count;
     }
 }
