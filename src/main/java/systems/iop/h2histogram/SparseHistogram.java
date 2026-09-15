@@ -2,7 +2,9 @@ package systems.iop.h2histogram;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -155,7 +157,8 @@ public final class SparseHistogram {
     }
 
     /**
-     * Computes percentiles directly on stored counts, preserving request order.
+     * Sorts and deduplicates requests, scans stored counts once, then restores
+     * request order and duplicates. Does not modify the caller's request array.
      * @throws IllegalArgumentException if any percentile is out of range
      * @throws ArithmeticException if the total exceeds unsigned 64-bit range
      */
@@ -170,9 +173,22 @@ public final class SparseHistogram {
         if (total == 0) {
             return List.of();
         }
+        double[] sortedUnique = Arrays.stream(percentiles).distinct().sorted().toArray();
+        Map<Double, Bucket> resultsByP = new HashMap<>();
+        int position = 0;
+        long running = count[0];
+        for (double p : sortedUnique) {
+            long target = U64.ceilCount(p, total);
+            while (Long.compareUnsigned(running, target) < 0) {
+                running += count[++position];
+            }
+            resultsByP.put(p, new Bucket(count[position],
+                    config.indexToLowerBound(index[position]),
+                    config.indexToUpperBound(index[position])));
+        }
         List<PercentileResult> output = new ArrayList<>(percentiles.length);
         for (double p : percentiles) {
-            output.add(new PercentileResult(p, percentileBucket(p, total)));
+            output.add(new PercentileResult(p, resultsByP.get(p)));
         }
         return output;
     }

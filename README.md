@@ -132,9 +132,9 @@ retains request order and duplicates, and leaves unused output entries untouched
 An empty histogram writes nothing and returns zero. Invalid requests (including
 NaN) and insufficient capacity are rejected before writing. Dense and sparse
 scalar queries scan counts; their buffer methods scan once for the total and once
-per request. Dense `percentiles(double...)` retains its sorted batched scan, while
-sparse batch queries scan sparse entries per request. Cumulative queries use
-binary search. Scalar methods bypass batch containers, and buffer methods avoid
+per request. Dense and sparse `percentiles(double...)` sort and deduplicate
+requests, scan their respective counts once, then restore request order and
+duplicates. Cumulative queries use binary search. Scalar methods bypass batch containers, and buffer methods avoid
 request/result collections, but returned `Bucket` objects still allocate.
 
 `SparseHistogram.merge` and `downsample` work on sorted sparse arrays.
