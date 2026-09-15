@@ -130,14 +130,132 @@ public final class SparseHistogram {
         return CumulativeHistogram.fromSparse(this);
     }
 
-    /** Computes a percentile via the dense representation. */
+    /**
+     * Queries stored counts directly, without constructing a dense histogram.
+     * @throws IllegalArgumentException if the percentile is out of range
+     * @throws ArithmeticException if the total exceeds unsigned 64-bit range
+     */
     public Optional<Bucket> percentile(double percentile) {
-        return toDense().percentile(percentile);
+        U64.validatePercentile(percentile);
+        long total = U64.checkedTotal(count);
+        return total == 0 ? Optional.empty() : Optional.of(percentileBucket(percentile, total));
     }
 
-    /** Computes percentiles via the dense representation. */
+    private Bucket percentileBucket(double percentile, long total) {
+        long target = U64.ceilCount(percentile, total);
+        long running = 0;
+        for (int i = 0; i < count.length; i++) {
+            running += count[i];
+            if (Long.compareUnsigned(running, target) >= 0) {
+                return new Bucket(count[i], config.indexToLowerBound(index[i]),
+                        config.indexToUpperBound(index[i]));
+            }
+        }
+        throw new IllegalStateException("invalid total");
+    }
+
+    /**
+     * Computes percentiles directly on stored counts, preserving request order.
+     * @throws IllegalArgumentException if any percentile is out of range
+     * @throws ArithmeticException if the total exceeds unsigned 64-bit range
+     */
     public List<PercentileResult> percentiles(double... percentiles) {
-        return toDense().percentiles(percentiles);
+        for (double p : percentiles) {
+            U64.validatePercentile(p);
+        }
+        if (percentiles.length == 0) {
+            return List.of();
+        }
+        long total = U64.checkedTotal(count);
+        if (total == 0) {
+            return List.of();
+        }
+        List<PercentileResult> output = new ArrayList<>(percentiles.length);
+        for (double p : percentiles) {
+            output.add(new PercentileResult(p, percentileBucket(p, total)));
+        }
+        return output;
+    }
+
+    /**
+     * Writes buckets in request order, retaining caller storage. Returns zero without
+     * writing for an empty histogram; unused output entries are untouched. Validates
+     * all requests/capacity first. Each request scans stored counts; Bucket objects
+     * still allocate. Unsigned total overflow throws ArithmeticException.
+     */
+    public int percentilesInto(double[] percentiles, Bucket[] output) {
+        U64.validateOutput(percentiles, output);
+        if (percentiles.length == 0) {
+            return 0;
+        }
+        long total = U64.checkedTotal(count);
+        if (total == 0) {
+            return 0;
+        }
+        for (int i = 0; i < percentiles.length; i++) {
+            output[i] = percentileBucket(percentiles[i], total);
+        }
+        return percentiles.length;
+    }
+
+    /**
+     * Merges sorted sparse arrays into an independent result. Configurations must
+     * match; unsigned bucket overflow throws ArithmeticException. No dense storage
+     * is constructed. Zero entries accepted by fromParts are omitted from output.
+     */
+    public SparseHistogram merge(SparseHistogram other) {
+        if (!config.equals(other.config)) {
+            throw new IllegalArgumentException("histograms have incompatible configurations");
+        }
+        int[] indices = new int[Math.addExact(index.length, other.index.length)];
+        long[] counts = new long[indices.length];
+        int a = 0, b = 0, size = 0;
+        while (a < index.length || b < other.index.length) {
+            int next;
+            long value;
+            if (b == other.index.length || (a < index.length && index[a] < other.index[b])) {
+                next = index[a];
+                value = count[a++];
+            } else if (a == index.length || other.index[b] < index[a]) {
+                next = other.index[b];
+                value = other.count[b++];
+            } else {
+                next = index[a];
+                value = U64.checkedAdd(count[a++], other.count[b++]);
+            }
+            if (value != 0) {
+                indices[size] = next;
+                counts[size++] = value;
+            }
+        }
+        return new SparseHistogram(config, Arrays.copyOf(indices, size), Arrays.copyOf(counts, size));
+    }
+
+    /**
+     * Maps sorted entries to a strictly coarser configuration and coalesces neighbors.
+     * Unsigned bucket overflow throws ArithmeticException. No dense storage is used.
+     */
+    public SparseHistogram downsample(int groupingPower) {
+        if (groupingPower >= config.groupingPower()) {
+            throw new IllegalArgumentException("target grouping_power must be less than current");
+        }
+        Config target = new Config(groupingPower, config.maxValuePower());
+        int[] indices = new int[index.length];
+        long[] counts = new long[count.length];
+        int size = 0;
+        for (int i = 0; i < index.length; i++) {
+            if (count[i] == 0) {
+                continue;
+            }
+            int mapped = target.valueToIndex(config.indexToLowerBound(index[i]));
+            if (size != 0 && indices[size - 1] == mapped) {
+                counts[size - 1] = U64.checkedAdd(counts[size - 1], count[i]);
+            } else {
+                indices[size] = mapped;
+                counts[size++] = count[i];
+            }
+        }
+        return new SparseHistogram(target, Arrays.copyOf(indices, size), Arrays.copyOf(counts, size));
     }
 
     int[] indexRef() {
