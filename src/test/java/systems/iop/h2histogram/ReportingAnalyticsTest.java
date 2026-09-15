@@ -236,4 +236,59 @@ class ReportingAnalyticsTest {
         assertEquals(0, h.percentilesInto(new double[0], new Bucket[0]));
         assertEquals(0, h.toSparse().percentilesInto(new double[0], new Bucket[0]));
     }
+
+    @Test void percentileOneUsesExactUnsignedTotalAcrossEveryQueryPath() {
+        for (long total : new long[] {(1L << 53) + 1, Long.MIN_VALUE + 1, -2L, -1L}) {
+            Histogram dense = new Histogram(2, 8);
+            dense.record(0, total - 1);
+            dense.record(1, 1);
+            SparseHistogram sparse = dense.toSparse();
+            CumulativeHistogram cumulative = dense.toCumulative();
+            double[] ps = {1, 0, 1};
+            Bucket[] denseOut = new Bucket[3];
+            Bucket[] sparseOut = new Bucket[3];
+            Bucket[] cumulativeOut = new Bucket[3];
+            dense.percentilesInto(ps, denseOut);
+            sparse.percentilesInto(ps, sparseOut);
+            cumulative.percentilesInto(ps, cumulativeOut);
+            Bucket expected = new Bucket(1, 1, 1);
+            assertAll("total=" + Long.toUnsignedString(total),
+                    () -> assertEquals(expected, dense.percentile(1).orElseThrow()),
+                    () -> assertEquals(expected, sparse.percentile(1).orElseThrow()),
+                    () -> assertEquals(expected, cumulative.percentile(1).orElseThrow()),
+                    () -> assertEquals(expected, dense.percentiles(ps).get(0).bucket()),
+                    () -> assertEquals(expected, sparse.percentiles(ps).get(0).bucket()),
+                    () -> assertEquals(expected, cumulative.percentiles(ps).get(0).bucket()),
+                    () -> assertEquals(expected, denseOut[0]),
+                    () -> assertEquals(expected, sparseOut[0]),
+                    () -> assertEquals(expected, cumulativeOut[0]));
+        }
+    }
+
+    @Test void sparseBatchMatchesScalarForManyUnorderedDuplicatesAndImportedZeros() {
+        Histogram dense = new Histogram(7, 32);
+        Random random = new Random(8371);
+        for (int i = 0; i < 500; i++) {
+            dense.record(random.nextInt(100000), 1 + random.nextInt(9));
+        }
+        int[] indices = new int[dense.size()];
+        for (int i = 0; i < indices.length; i++) {
+            indices[i] = i;
+        }
+        // Explicit zeros between and after observations must not affect the sorted scan.
+        SparseHistogram sparse = SparseHistogram.fromParts(dense.config(), indices, dense.bucketCounts());
+        double[] ps = new double[200];
+        for (int i = 0; i < ps.length; i++) {
+            ps[i] = random.nextInt(21) / 20.0;
+        }
+        ps[0] = -0.0;
+        ps[1] = 0.0;
+        double[] before = ps.clone();
+        List<PercentileResult> results = sparse.percentiles(ps);
+        assertArrayEquals(before, ps);
+        assertEquals(dense.percentiles(ps), results);
+        for (int i = 0; i < ps.length; i++) {
+            assertEquals(sparse.percentile(ps[i]).orElseThrow(), results.get(i).bucket());
+        }
+    }
 }

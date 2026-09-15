@@ -67,6 +67,11 @@ final class U64 {
      * matching the Rust crate's {@code max(1, (q * total).ceil())}.
      */
     static long ceilCount(double p, long total) {
+        // The endpoint must select the final observation even when conversion to
+        // double rounds the unsigned total down (for example 2^63 + 1).
+        if (p == 1.0) {
+            return total;
+        }
         double target = Math.ceil(p * toDouble(total));
         if (target < 1.0) {
             return 1;
