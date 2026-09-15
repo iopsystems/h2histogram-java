@@ -87,7 +87,10 @@ public final class CumulativeHistogram {
         return new CumulativeHistogram(config, index.clone(), count.clone());
     }
 
-    /** Builds a {@code CumulativeHistogram} from a dense {@link Histogram}. */
+    /**
+     * Builds a {@code CumulativeHistogram} from a dense {@link Histogram}.
+     * @throws ArithmeticException if the total exceeds unsigned 64-bit range
+     */
     public static CumulativeHistogram fromHistogram(Histogram histogram) {
         long[] buckets = histogram.bucketsRef();
         int nonzero = 0;
@@ -102,7 +105,7 @@ public final class CumulativeHistogram {
         long running = 0;
         for (int i = 0; i < buckets.length; i++) {
             if (buckets[i] != 0) {
-                running += buckets[i];
+                running = U64.checkedAdd(running, buckets[i]);
                 index[k] = i;
                 count[k] = running;
                 k++;
@@ -111,15 +114,29 @@ public final class CumulativeHistogram {
         return new CumulativeHistogram(histogram.config(), index, count);
     }
 
-    /** Builds a {@code CumulativeHistogram} from a {@link SparseHistogram}. */
+    /**
+     * Builds a {@code CumulativeHistogram} from a {@link SparseHistogram}.
+     * @throws ArithmeticException if the total exceeds unsigned 64-bit range
+     */
     public static CumulativeHistogram fromSparse(SparseHistogram sparse) {
-        int[] index = sparse.indexRef().clone();
+        int[] sparseIndex = sparse.indexRef();
         long[] sparseCount = sparse.countRef();
-        long[] cumulative = new long[sparseCount.length];
+        int nonzero = 0;
+        for (long c : sparseCount) {
+            if (c != 0) {
+                nonzero++;
+            }
+        }
+        int[] index = new int[nonzero];
+        long[] cumulative = new long[nonzero];
         long running = 0;
+        int size = 0;
         for (int i = 0; i < sparseCount.length; i++) {
-            running += sparseCount[i];
-            cumulative[i] = running;
+            if (sparseCount[i] != 0) {
+                running = U64.checkedAdd(running, sparseCount[i]);
+                index[size] = sparseIndex[i];
+                cumulative[size++] = running;
+            }
         }
         return new CumulativeHistogram(sparse.config(), index, cumulative);
     }
@@ -204,11 +221,29 @@ public final class CumulativeHistogram {
      * @throws IllegalArgumentException if the percentile is out of range
      */
     public Optional<Bucket> percentile(double percentile) {
-        List<PercentileResult> results = percentiles(percentile);
-        if (results.isEmpty()) {
+        U64.validatePercentile(percentile);
+        if (count.length == 0) {
             return Optional.empty();
         }
-        return Optional.of(results.get(0).bucket());
+        return Optional.of(bucketAt(findQuantilePosition(U64.ceilCount(percentile, totalCount()))));
+    }
+
+    /**
+     * Writes buckets into caller storage in request order using binary search.
+     * Returns zero without writing for empty histograms. Validates all requests and
+     * capacity before writing; unused output entries are untouched. Bucket objects
+     * still allocate, but no batch request/result containers are constructed.
+     */
+    public int percentilesInto(double[] percentiles, Bucket[] output) {
+        U64.validateOutput(percentiles, output);
+        if (count.length == 0) {
+            return 0;
+        }
+        long total = totalCount();
+        for (int i = 0; i < percentiles.length; i++) {
+            output[i] = bucketAt(findQuantilePosition(U64.ceilCount(percentiles[i], total)));
+        }
+        return percentiles.length;
     }
 
     /**
@@ -280,6 +315,48 @@ public final class CumulativeHistogram {
             out.add(new BucketWithQuantiles(bucketAt(i), lower, upper));
         }
         return out;
+    }
+
+    /** Converts prefix differences to independent sparse arrays, omitting zero entries. */
+    public SparseHistogram toSparse() {
+        int nonzero = 0;
+        for (int i = 0; i < count.length; i++) {
+            if (individualCount(i) != 0) {
+                nonzero++;
+            }
+        }
+        int[] indices = new int[nonzero];
+        long[] counts = new long[nonzero];
+        int size = 0;
+        for (int i = 0; i < count.length; i++) {
+            long individual = individualCount(i);
+            if (individual != 0) {
+                indices[size] = index[i];
+                counts[size++] = individual;
+            }
+        }
+        return SparseHistogram.fromParts(config, indices, counts);
+    }
+
+    /**
+     * Merges through sorted sparse arrays and rebuilds valid unsigned prefixes and
+     * the midpoint mean. Configurations must match. Bucket or total overflow throws
+     * ArithmeticException. No dense histogram is constructed.
+     */
+    public CumulativeHistogram merge(CumulativeHistogram other) {
+        if (!config.equals(other.config)) {
+            throw new IllegalArgumentException("histograms have incompatible configurations");
+        }
+        U64.checkedAdd(totalCount(), other.totalCount());
+        return toSparse().merge(other.toSparse()).toCumulative();
+    }
+
+    /**
+     * Downsamples through sorted sparse arrays, recomputing the midpoint mean from
+     * the resulting geometry. The target grouping power must be strictly smaller.
+     */
+    public CumulativeHistogram downsample(int groupingPower) {
+        return toSparse().downsample(groupingPower).toCumulative();
     }
 
     /** Reconstructs a dense {@link Histogram}. */

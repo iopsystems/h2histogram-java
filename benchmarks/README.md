@@ -81,3 +81,42 @@ Observations:
   the linear region is only 16 buckets wide, so a 64-bucket stream mixes
   linear and logarithmic paths and pays for branch misprediction, while at
   `all` the branch becomes predictable-enough again and h2 pulls ahead.
+
+
+## Reporting and analytics phases
+
+`ReportingBenchmark` is separate from the existing `RecordBenchmark`; the historical
+recording results above do not measure these new APIs. Run on an otherwise idle
+machine, choosing precision and occupancy independently:
+
+```bash
+mvn -B install
+mvn -B -f benchmarks/pom.xml package
+java -jar benchmarks/target/benchmarks.jar ReportingBenchmark \
+  -p groupingPower=7 -p occupancy=few -prof gc -rf json -rff reporting.json
+# Fast harness verification only; not sufficient for performance conclusions:
+java -jar benchmarks/target/benchmarks.jar ReportingBenchmark \
+  -p groupingPower=7 -p occupancy=few -wi 0 -i 1 -r 50ms -f 1
+```
+
+Fixtures, input lists, request arrays, and output buffers are prepared at trial
+setup outside timing. Occupancy `few` uses 64 buckets spread across the full
+configuration; `all` fills every bucket. Every invocation measures one report
+operation (or one explicitly named combined lifecycle operation), not one observation.
+
+- `denseScalar`, `sparseScalar`, `cumulativeScalar`: one p99 lookup, including the
+  Optional/Bucket result. `*Batch` includes result-list/record construction for six
+  requests; `*Into` reuses arrays but still creates Bucket results.
+- `sparseSnapshot`, `cumulativeSnapshot`: snapshot construction, including scans,
+  arrays, and cumulative mean computation. `snapshotInto`: copy into existing dense
+  storage. `resetAfterSnapshot`: refill plus reset; `drainWithRefill`: refill plus
+  drain; `checkedAddWithReset`: reset plus checked addition. Refill/reset costs are
+  deliberately inside timing and must not be mistaken for isolated operation costs.
+- `ownedSum`: four references to the prepared source, including owned output creation.
+  `sparseMerge`, `cumulativeMerge`, `*Downsample`, `cumulativeToSparse`: native
+  transform output construction, including temporary arrays and recomputed means.
+
+JMH consumes returned results. Java reclamation is asynchronous; `-prof gc` reports
+allocation and collection effects rather than a separately timed destructor. Use
+multiple forks and normal warmup/measurement durations for conclusions. Array reuse
+is not an allocation-free guarantee and no port-specific speedup is claimed here.
