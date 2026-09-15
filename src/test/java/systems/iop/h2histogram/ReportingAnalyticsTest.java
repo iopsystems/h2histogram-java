@@ -275,7 +275,7 @@ class ReportingAnalyticsTest {
         for (int i = 0; i < indices.length; i++) {
             indices[i] = i;
         }
-        // Explicit zeros between and after observations must not affect the sorted scan.
+        // Imported zeros between and after observations must not affect query results.
         SparseHistogram sparse = SparseHistogram.fromParts(dense.config(), indices, dense.bucketCounts());
         double[] ps = new double[200];
         for (int i = 0; i < ps.length; i++) {
@@ -290,5 +290,29 @@ class ReportingAnalyticsTest {
         for (int i = 0; i < ps.length; i++) {
             assertEquals(sparse.percentile(ps[i]).orElseThrow(), results.get(i).bucket());
         }
+    }
+
+    @Test void sparseImportsNormalizeZerosAfterValidatingEveryIndex() {
+        Config config = new Config(2, 8);
+        SparseHistogram allZero = SparseHistogram.fromParts(config,
+                new int[] {0, 1}, new long[] {0, 0});
+        assertTrue(allZero.isEmpty());
+        assertEquals(0, allZero.size());
+        assertArrayEquals(new int[0], allZero.index());
+        assertArrayEquals(new long[0], allZero.count());
+        assertTrue(allZero.toCumulative().isEmpty());
+        assertTrue(allZero.toCumulative().mean().isEmpty());
+        SparseHistogram leadingZero = SparseHistogram.fromParts(config,
+                new int[] {0, 1, 2, 3}, new long[] {0, 2, 0, 3});
+        assertArrayEquals(new int[] {1, 3}, leadingZero.index());
+        assertArrayEquals(new long[] {2, 3}, leadingZero.count());
+        assertArrayEquals(new long[] {2, 5}, leadingZero.toCumulative().count());
+        assertEquals(leadingZero.toDense().toCumulative(), leadingZero.toCumulative());
+        assertThrows(IllegalArgumentException.class,
+                () -> SparseHistogram.fromParts(config, new int[] {1, 1}, new long[] {0, 0}));
+        assertThrows(IllegalArgumentException.class,
+                () -> SparseHistogram.fromParts(config, new int[] {-1}, new long[] {0}));
+        assertThrows(IllegalArgumentException.class,
+                () -> SparseHistogram.fromParts(config, new int[] {config.totalBuckets()}, new long[] {0}));
     }
 }
