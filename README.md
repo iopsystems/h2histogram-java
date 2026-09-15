@@ -121,8 +121,9 @@ or external synchronization, including throughout two-pass checked addition.
 
 `checkedAddAssign(other)` checks every unsigned bucket addition before changing
 any destination count, including when `other == this`. `Histogram.checkedSum(List<Histogram>)`
-validates every configuration before allocating its independent output or adding
-counts; it rejects an empty list, copies a singleton, and counts repeated references
+validates every configuration before allocating its independent output, copies the
+first source directly, then checks and adds each remaining source in one pass.
+It rejects an empty list, copies a singleton, and counts repeated references
 repeatedly without mutating any input. Mismatch throws `IllegalArgumentException`;
 unsigned bucket overflow throws `ArithmeticException`.
 
@@ -148,8 +149,10 @@ Sparse and cumulative snapshots use fixed-size arrays; produced snapshots have
 exactly one entry per retained bucket. A shrink-to-fit API is therefore not applicable.
 Public array accessors return copies, so callers cannot invalidate cumulative means.
 Raw imports validate lengths, index range/order, and unsigned cumulative monotonicity.
-For compatibility, sparse imports still accept zero entries and cumulative imports
-accept repeated positive prefixes; native transforms omit their zero-count entries.
+Sparse imports accept zero counts, validate every supplied index first, then omit
+zero entries from their exact-sized stored arrays; an all-zero import is empty.
+Cumulative imports retain acceptance of repeated positive prefixes; conversion to
+sparse and native transforms omit their zero-count entries.
 
 See [reporting benchmarks](benchmarks/README.md#reporting-and-analytics-phases) for
 separate query, construction, reuse, and transform measurements. Java remains

@@ -48,7 +48,9 @@ public final class SparseHistogram {
     }
 
     /**
-     * Creates a sparse histogram from raw parts, validating invariants.
+     * Creates a sparse histogram from raw parts, validating all indices and lengths
+     * before omitting zero counts. The stored arrays have exactly one entry per
+     * non-zero count; an all-zero input produces an empty histogram.
      *
      * @throws IllegalArgumentException if the lengths differ, an index is out
      *     of range, or the indices are not strictly ascending
@@ -70,7 +72,22 @@ public final class SparseHistogram {
             }
             prev = i;
         }
-        return new SparseHistogram(config, index.clone(), count.clone());
+        int nonzero = 0;
+        for (long value : count) {
+            if (value != 0) {
+                nonzero++;
+            }
+        }
+        int[] indices = new int[nonzero];
+        long[] counts = new long[nonzero];
+        int size = 0;
+        for (int i = 0; i < count.length; i++) {
+            if (count[i] != 0) {
+                indices[size] = index[i];
+                counts[size++] = count[i];
+            }
+        }
+        return new SparseHistogram(config, indices, counts);
     }
 
     /** Returns the bucketing configuration. */
@@ -217,7 +234,7 @@ public final class SparseHistogram {
     /**
      * Merges sorted sparse arrays into an independent result. Configurations must
      * match; unsigned bucket overflow throws ArithmeticException. No dense storage
-     * is constructed. Zero entries accepted by fromParts are omitted from output.
+     * is constructed.
      */
     public SparseHistogram merge(SparseHistogram other) {
         if (!config.equals(other.config)) {

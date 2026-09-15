@@ -3,6 +3,7 @@ package systems.iop.h2histogram;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -193,7 +194,11 @@ public final class Histogram {
             first.checkCompatible(histogram);
         }
         Histogram result = new Histogram(first.config);
-        for (Histogram histogram : histograms) {
+        System.arraycopy(first.buckets, 0, result.buckets, 0, first.buckets.length);
+        Iterator<Histogram> remaining = histograms.iterator();
+        remaining.next();
+        while (remaining.hasNext()) {
+            Histogram histogram = remaining.next();
             for (int i = 0; i < result.buckets.length; i++) {
                 result.buckets[i] = U64.checkedAdd(result.buckets[i], histogram.buckets[i]);
             }
