@@ -3,7 +3,7 @@
 [![CI](https://github.com/iopsystems/h2histogram-java/actions/workflows/ci.yml/badge.svg)](https://github.com/iopsystems/h2histogram-java/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A pure-Java implementation of the [iopsystems h2 histogram](https://github.com/iopsystems/histogram).
+A pure-Java implementation of the [h2histogram design](https://github.com/iopsystems/histogram).
 
 `h2histogram` produces histograms with **byte-for-byte identical bucketing** to the
 Rust `histogram` crate, so histograms recorded here can be consumed by
@@ -14,9 +14,9 @@ it on the JVM. Values are carried in Java `long`s with unsigned semantics
 (`Long.compareUnsigned` and friends), so the full `u64` value range is supported,
 exactly like the Rust crate.
 
-## What is an h2 histogram?
+## What is h2histogram?
 
-An h2 histogram quantizes values into buckets using two parameters:
+h2histogram quantizes values into buckets using two parameters:
 
 - **`groupingPower`** — the number of buckets spanning each power of two. It sets
   the relative error to `2^-groupingPower` (e.g. `groupingPower=7` → ~0.78% error).

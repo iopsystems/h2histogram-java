@@ -67,17 +67,17 @@ machine.
 Observations:
 
 - **Linear-region fast path.** When every value lands in the linear region
-  (`few` at gp7/gp14, where the first 64 buckets are all width-1), h2's
+  (`few` at gp7/gp14, where the first 64 buckets are all width-1), h2histogram's
   index computation collapses to a bounds check plus an array increment:
   ~0.76 ns/op, roughly 4× faster than HDR on the same stream.
-- **Large working sets favour h2.** At gp14 with the full ~6.3 MiB counter
-  array in play (past L2), h2 records ~1.8× faster than HDR at essentially
+- **Large working sets favour h2histogram.** At gp14 with the full ~6.3 MiB counter
+  array in play (past L2), h2histogram records ~1.8× faster than HDR at essentially
   the same relative error, thanks to its cheaper index computation ahead of
   the inevitable cache misses.
 - **Mixed streams are a wash at moderate sizes.** At gp7/`quarter` the two
   are within noise of each other; HDR is remarkably flat (~2.7–3.0 ns/op)
   whenever its array fits in cache.
-- The gp3/`few` cell is the one spread where h2 trails: at grouping power 3
+- The gp3/`few` cell is the one spread where h2histogram trails: at grouping power 3
   the linear region is only 16 buckets wide, so a 64-bucket stream mixes
   linear and logarithmic paths and pays for branch misprediction, while at
-  `all` the branch becomes predictable-enough again and h2 pulls ahead.
+  `all` the branch becomes predictable-enough again and h2histogram pulls ahead.
