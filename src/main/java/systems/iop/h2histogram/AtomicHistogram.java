@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicLongArray;
  *
  * <p>This is the Java analogue of the Rust {@code AtomicHistogram}. Unlike
  * {@link Histogram} it cannot report percentiles directly. Take a non-atomic
- * snapshot with {@link #load()} and query that.
+ * snapshot with {@link #load()} or {@link #drain()} and query that.
  *
  * <h2>Concurrency contract</h2>
  *
@@ -20,6 +20,9 @@ import java.util.concurrent.atomic.AtomicLongArray;
  *   <li>{@link #load()} and {@link #loadInto(Histogram)} read each bucket
  *       individually. The result is not one instantaneous histogram-wide
  *       snapshot: a write concurrent with a load may or may not be included.
+ *   <li>{@link #drain()} and {@link #drainInto(Histogram)} capture and clear
+ *       each bucket in one atomic step. Every recorded count is returned by
+ *       exactly one drain: none is lost and none is returned twice.
  * </ul>
  *
  * <p>There is no instantaneous boundary across buckets. An exact interval
@@ -98,6 +101,37 @@ public final class AtomicHistogram {
         long[] out = checkedDestination(destination);
         for (int i = 0; i < out.length; i++) {
             out[i] = buckets.getAcquire(i);
+        }
+    }
+
+    /**
+     * Captures the current bucket values into a new {@link Histogram} and
+     * resets this histogram to zero.
+     */
+    public Histogram drain() {
+        Histogram snapshot = new Histogram(config);
+        drainInto(snapshot);
+        return snapshot;
+    }
+
+    /**
+     * Captures the current bucket values into {@code destination}, reusing its
+     * storage, and resets this histogram to zero. Every destination bucket is
+     * replaced, including with zero. The caller must own {@code destination}
+     * exclusively during the call.
+     *
+     * <p>Each bucket is captured and cleared in one atomic step, so every
+     * recorded count is returned by exactly one drain: none is lost and none
+     * is returned twice, whatever writers or other drains run concurrently. A
+     * write concurrent with a drain lands in that drain or in a later one.
+     *
+     * @throws IllegalArgumentException if the configurations differ; neither
+     *     histogram is changed
+     */
+    public void drainInto(Histogram destination) {
+        long[] out = checkedDestination(destination);
+        for (int i = 0; i < out.length; i++) {
+            out[i] = buckets.getAndSet(i, 0L);
         }
     }
 

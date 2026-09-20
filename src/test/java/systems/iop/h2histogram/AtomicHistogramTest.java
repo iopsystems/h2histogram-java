@@ -103,6 +103,59 @@ class AtomicHistogramTest {
     }
 
     @Test
+    void drainReturnsCountsAndResetsToZero() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+        a.record(1L << 40, 6);
+
+        Histogram expected = new Histogram(7, 64);
+        expected.record(100, 4);
+        expected.record(1L << 40, 6);
+
+        assertEquals(expected, a.drain());
+        assertEquals(new Histogram(7, 64), a.drain());
+        assertEquals(new Histogram(7, 64), a.load());
+    }
+
+    @Test
+    void loadDoesNotConsumeWhatDrainReturns() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(42, 3);
+        a.load();
+        assertEquals(3, a.drain().totalCount());
+    }
+
+    @Test
+    void drainIntoOverwritesEveryDestinationBucket() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+        Histogram destination = new Histogram(7, 64);
+        destination.record(5000, 9);
+
+        a.drainInto(destination);
+
+        Histogram expected = new Histogram(7, 64);
+        expected.record(100, 4);
+        assertEquals(expected, destination);
+        assertEquals(0, a.load().totalCount());
+    }
+
+    @Test
+    void drainIntoRejectsMismatchedConfigAndChangesNothing() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+        Histogram destination = new Histogram(3, 64);
+        destination.record(7, 2);
+        Histogram before = Histogram.fromBuckets(3, 64, destination.bucketCounts());
+
+        assertThrows(IllegalArgumentException.class, () -> a.drainInto(destination));
+        assertEquals(before, destination);
+        // The counters were not cleared by the failed drain.
+        assertEquals(4, a.load().totalCount());
+        assertThrows(NullPointerException.class, () -> a.drainInto(null));
+    }
+
+    @Test
     void toStringNamesTheConfiguration() {
         assertEquals("AtomicHistogram(grouping_power=7, max_value_power=64)",
                 new AtomicHistogram(7, 64).toString());
