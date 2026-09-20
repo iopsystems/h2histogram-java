@@ -2,8 +2,21 @@ package systems.iop.h2histogram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntConsumer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 class AtomicHistogramTest {
 
@@ -159,5 +172,106 @@ class AtomicHistogramTest {
     void toStringNamesTheConfiguration() {
         assertEquals("AtomicHistogram(grouping_power=7, max_value_power=64)",
                 new AtomicHistogram(7, 64).toString());
+    }
+
+    // The two tests below are stress tests. A failure proves a bug; a pass
+    // only fails to find one. They cannot prove the absence of a race.
+
+    private static final int WRITERS = 8;
+    private static final int PER_WRITER = 200_000;
+
+    /** Half the values hit 16 hot buckets, half spread over the whole range. */
+    private static long[][] writerInputs() {
+        long[][] inputs = new long[WRITERS][PER_WRITER];
+        for (int t = 0; t < WRITERS; t++) {
+            Random rng = new Random(1000 + t);
+            for (int i = 0; i < PER_WRITER; i++) {
+                inputs[t][i] = (i & 1) == 0
+                        ? rng.nextInt(16)
+                        : rng.nextLong() >>> rng.nextInt(64);
+            }
+        }
+        return inputs;
+    }
+
+    private static Histogram expectedFrom(long[][] inputs) {
+        Histogram expected = new Histogram(7, 64);
+        for (long[] perThread : inputs) {
+            for (long v : perThread) {
+                expected.increment(v);
+            }
+        }
+        return expected;
+    }
+
+    /** Runs {@code body(threadIndex)} on {@code threads} threads released together. */
+    private static void runTogether(int threads, IntConsumer body) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<?>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                final int index = t;
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    body.accept(index);
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (Future<?> f : futures) {
+                f.get(20, TimeUnit.SECONDS); // rethrows any failure from the thread
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void concurrentWritersAreAllCounted() throws Exception {
+        long[][] inputs = writerInputs();
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+
+        runTogether(WRITERS, t -> {
+            for (long v : inputs[t]) {
+                a.increment(v);
+            }
+        });
+
+        assertEquals(expectedFrom(inputs), a.load());
+    }
+
+    @Test
+    @Timeout(30)
+    void everyCountIsReturnedByExactlyOneDrain() throws Exception {
+        long[][] inputs = writerInputs();
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        AtomicBoolean writersDone = new AtomicBoolean(false);
+        AtomicLong drains = new AtomicLong();
+        Histogram[] accumulated = {new Histogram(7, 64)};
+
+        Thread drainer = new Thread(() -> {
+            Histogram scratch = new Histogram(7, 64);
+            while (!writersDone.get()) {
+                a.drainInto(scratch);
+                accumulated[0] = accumulated[0].merge(scratch);
+                drains.incrementAndGet();
+            }
+        });
+        drainer.start();
+
+        runTogether(WRITERS, t -> {
+            for (long v : inputs[t]) {
+                a.increment(v);
+            }
+        });
+        writersDone.set(true);
+        drainer.join(TimeUnit.SECONDS.toMillis(20));
+
+        Histogram total = accumulated[0].merge(a.drain());
+        assertTrue(drains.get() > 0, "the drainer never ran concurrently with writers");
+        assertEquals(expectedFrom(inputs), total);
+        assertEquals(new Histogram(7, 64), a.load());
     }
 }

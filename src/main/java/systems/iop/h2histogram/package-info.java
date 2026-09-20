@@ -25,5 +25,10 @@
  * <p>Values and counts are unsigned 64-bit integers ({@code u64}) carried in
  * Java {@code long}s with unsigned semantics, so the full {@code u64} range is
  * supported, exactly like the Rust crate.
+ *
+ * <p>{@link systems.iop.h2histogram.Histogram} is not thread-safe. To record
+ * from several threads into one shared instance use
+ * {@link systems.iop.h2histogram.AtomicHistogram}, then snapshot it to a
+ * {@code Histogram} to query.
  */
 package systems.iop.h2histogram;
