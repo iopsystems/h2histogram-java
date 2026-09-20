@@ -1,6 +1,7 @@
 package systems.iop.h2histogram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -268,6 +269,7 @@ class AtomicHistogramTest {
         });
         writersDone.set(true);
         drainer.join(TimeUnit.SECONDS.toMillis(20));
+        assertFalse(drainer.isAlive(), "the drainer thread did not finish within 20 s");
 
         Histogram total = accumulated[0].merge(a.drain());
         assertTrue(drains.get() > 0, "the drainer never ran concurrently with writers");
