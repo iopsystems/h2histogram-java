@@ -87,7 +87,7 @@ is lost, which breaks the exactly-one-drain guarantee. Each contended `LongAdder
 also grows its own cell array, which does not scale to the 7,424 buckets of a
 `Config(7, 64)`.
 
-**Why `getAcquire` and not `get` or a plain read.** `getAcquire` is an opaque
+**Why `getAcquire` and not `get` or a plain read.** `getAcquire` is an acquire
 read. It is atomic for a `long`, and it observes any write that happens-before
 it, including a write followed by `Thread.join`, `Future.get` or a volatile
 handoff. The contract promises nothing fresher: "a write concurrent with a load

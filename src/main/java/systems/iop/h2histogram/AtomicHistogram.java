@@ -116,7 +116,7 @@ public final class AtomicHistogram {
     public void loadInto(Histogram destination) {
         long[] out = checkedDestination(destination);
         for (int i = 0; i < out.length; i++) {
-            // getAcquire is an opaque read, atomic for a long, that sees any
+            // getAcquire is an acquire read, atomic for a long, that sees any
             // write that happens-before it. The contract does not promise a
             // fresher read than that, so this must not be "fixed" to a plain
             // read, and a volatile get is not needed.
