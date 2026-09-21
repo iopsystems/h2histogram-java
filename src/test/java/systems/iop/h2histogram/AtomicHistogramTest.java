@@ -2,6 +2,7 @@ package systems.iop.h2histogram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,6 +16,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntConsumer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -249,30 +251,56 @@ class AtomicHistogramTest {
         long[][] inputs = writerInputs();
         AtomicHistogram a = new AtomicHistogram(7, 64);
         AtomicBoolean writersDone = new AtomicBoolean(false);
-        AtomicLong drains = new AtomicLong();
+        AtomicLong nonEmptyDrains = new AtomicLong();
+        AtomicReference<Throwable> drainerFailure = new AtomicReference<>();
         Histogram[] accumulated = {new Histogram(7, 64)};
 
         Thread drainer = new Thread(() -> {
-            Histogram scratch = new Histogram(7, 64);
-            while (!writersDone.get()) {
-                a.drainInto(scratch);
-                accumulated[0] = accumulated[0].merge(scratch);
-                drains.incrementAndGet();
+            try {
+                Histogram scratch = new Histogram(7, 64);
+                while (!writersDone.get()) {
+                    a.drainInto(scratch);
+                    if (scratch.totalCount() != 0) {
+                        // Proves the drainer actually overlapped a writer: a
+                        // drain of the still-empty histogram before writers
+                        // start would otherwise satisfy a weaker check.
+                        nonEmptyDrains.incrementAndGet();
+                    }
+                    accumulated[0] = accumulated[0].merge(scratch);
+                }
+            } catch (Throwable t) {
+                drainerFailure.set(t);
             }
         });
+        // Daemon so a failure or interruption in the writer phase below (an
+        // exception from runTogether, or the @Timeout interrupting this
+        // thread) cannot leave a non-daemon thread spinning for the rest of
+        // the Surefire JVM.
+        drainer.setDaemon(true);
         drainer.start();
 
-        runTogether(WRITERS, t -> {
-            for (long v : inputs[t]) {
-                a.increment(v);
-            }
-        });
-        writersDone.set(true);
+        try {
+            runTogether(WRITERS, t -> {
+                for (long v : inputs[t]) {
+                    a.increment(v);
+                }
+            });
+        } finally {
+            // Always signal the drainer to stop, even if runTogether threw.
+            writersDone.set(true);
+        }
         drainer.join(TimeUnit.SECONDS.toMillis(20));
         assertFalse(drainer.isAlive(), "the drainer thread did not finish within 20 s");
+        assertNull(drainerFailure.get(),
+                "the drainer thread threw: " + drainerFailure.get());
 
         Histogram total = accumulated[0].merge(a.drain());
-        assertTrue(drains.get() > 0, "the drainer never ran concurrently with writers");
+        // After writers finish, at most one further drain can be non-empty,
+        // so seeing at least 2 shows the drainer genuinely ran concurrently
+        // with the writers, not just once before or after them.
+        assertTrue(nonEmptyDrains.get() >= 2,
+                "expected at least 2 non-empty drains to show the drainer overlapped with the "
+                        + "writers, got " + nonEmptyDrains.get());
         assertEquals(expectedFrom(inputs), total);
         assertEquals(new Histogram(7, 64), a.load());
     }
