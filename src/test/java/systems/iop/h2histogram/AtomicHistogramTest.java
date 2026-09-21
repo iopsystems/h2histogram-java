@@ -1,0 +1,311 @@
+package systems.iop.h2histogram;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntConsumer;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+class AtomicHistogramTest {
+
+    @Test
+    void constructorsAndConfig() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        assertEquals(new Config(7, 64), a.config());
+
+        Config c = new Config(3, 32);
+        assertEquals(c, new AtomicHistogram(c).config());
+
+        assertThrows(IllegalArgumentException.class, () -> new AtomicHistogram(7, 65));
+        assertThrows(IllegalArgumentException.class, () -> new AtomicHistogram(64, 64));
+        assertThrows(IllegalArgumentException.class, () -> new AtomicHistogram(10, 5));
+        assertThrows(NullPointerException.class, () -> new AtomicHistogram(null));
+    }
+
+    @Test
+    void loadMatchesPlainHistogram() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        Histogram expected = new Histogram(7, 64);
+
+        // Linear region, the cutoff, logarithmic region, and values above
+        // Long.MAX_VALUE (negative longs are large unsigned values).
+        long[] values = {0, 1, 2, 255, 256, 257, 1000, 1L << 40, (1L << 40) + 1,
+            Long.MAX_VALUE, Long.MIN_VALUE, -1L};
+        for (int i = 0; i < values.length; i++) {
+            long count = i + 1;
+            a.record(values[i], count);
+            expected.record(values[i], count);
+        }
+        for (long v = 0; v < 600; v++) {
+            a.increment(v);
+            expected.increment(v);
+        }
+
+        assertEquals(expected, a.load());
+    }
+
+    @Test
+    void outOfRangeThrowsAndChangesNothing() {
+        AtomicHistogram a = new AtomicHistogram(7, 10); // max value is 1023
+        a.increment(1023);
+        assertThrows(IllegalArgumentException.class, () -> a.increment(1024));
+        assertThrows(IllegalArgumentException.class, () -> a.record(-1L, 5));
+
+        Histogram expected = new Histogram(7, 10);
+        expected.increment(1023);
+        assertEquals(expected, a.load());
+    }
+
+    @Test
+    void loadLeavesCountersInPlace() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(42, 3);
+        Histogram first = a.load();
+        Histogram second = a.load();
+        assertEquals(first, second);
+        assertEquals(3, second.totalCount());
+    }
+
+    @Test
+    void loadIntoOverwritesEveryDestinationBucket() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+
+        // The destination holds a count in a bucket that is zero in the source.
+        Histogram destination = new Histogram(7, 64);
+        destination.record(5000, 9);
+        a.loadInto(destination);
+
+        Histogram expected = new Histogram(7, 64);
+        expected.record(100, 4);
+        assertEquals(expected, destination);
+    }
+
+    @Test
+    void loadIntoRejectsMismatchedConfigAndChangesNothing() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+        Histogram destination = new Histogram(3, 64);
+        destination.record(7, 2);
+        Histogram before = Histogram.fromBuckets(3, 64, destination.bucketCounts());
+
+        assertThrows(IllegalArgumentException.class, () -> a.loadInto(destination));
+        assertEquals(before, destination);
+        assertEquals(4, a.load().totalCount());
+        assertThrows(NullPointerException.class, () -> a.loadInto(null));
+    }
+
+    @Test
+    void countsWrapModulo2To64() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(5, -1L); // 2^64 - 1
+        a.record(5, 2);
+        assertEquals(1, a.load().bucketCounts()[a.config().valueToIndex(5)]);
+    }
+
+    @Test
+    void drainReturnsCountsAndResetsToZero() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+        a.record(1L << 40, 6);
+
+        Histogram expected = new Histogram(7, 64);
+        expected.record(100, 4);
+        expected.record(1L << 40, 6);
+
+        assertEquals(expected, a.drain());
+        assertEquals(new Histogram(7, 64), a.drain());
+        assertEquals(new Histogram(7, 64), a.load());
+    }
+
+    @Test
+    void loadDoesNotConsumeWhatDrainReturns() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(42, 3);
+        a.load();
+        assertEquals(3, a.drain().totalCount());
+    }
+
+    @Test
+    void drainIntoOverwritesEveryDestinationBucket() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+        Histogram destination = new Histogram(7, 64);
+        destination.record(5000, 9);
+
+        a.drainInto(destination);
+
+        Histogram expected = new Histogram(7, 64);
+        expected.record(100, 4);
+        assertEquals(expected, destination);
+        assertEquals(0, a.load().totalCount());
+    }
+
+    @Test
+    void drainIntoRejectsMismatchedConfigAndChangesNothing() {
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        a.record(100, 4);
+        Histogram destination = new Histogram(3, 64);
+        destination.record(7, 2);
+        Histogram before = Histogram.fromBuckets(3, 64, destination.bucketCounts());
+
+        assertThrows(IllegalArgumentException.class, () -> a.drainInto(destination));
+        assertEquals(before, destination);
+        // The counters were not cleared by the failed drain.
+        assertEquals(4, a.load().totalCount());
+        assertThrows(NullPointerException.class, () -> a.drainInto(null));
+    }
+
+    @Test
+    void toStringNamesTheConfiguration() {
+        assertEquals("AtomicHistogram(grouping_power=7, max_value_power=64)",
+                new AtomicHistogram(7, 64).toString());
+    }
+
+    // The two tests below are stress tests. A failure proves a bug; a pass
+    // only fails to find one. They cannot prove the absence of a race.
+
+    private static final int WRITERS = 8;
+    private static final int PER_WRITER = 200_000;
+
+    /** Half the values hit 16 hot buckets, half spread over the whole range. */
+    private static long[][] writerInputs() {
+        long[][] inputs = new long[WRITERS][PER_WRITER];
+        for (int t = 0; t < WRITERS; t++) {
+            Random rng = new Random(1000 + t);
+            for (int i = 0; i < PER_WRITER; i++) {
+                inputs[t][i] = (i & 1) == 0
+                        ? rng.nextInt(16)
+                        : rng.nextLong() >>> rng.nextInt(64);
+            }
+        }
+        return inputs;
+    }
+
+    private static Histogram expectedFrom(long[][] inputs) {
+        Histogram expected = new Histogram(7, 64);
+        for (long[] perThread : inputs) {
+            for (long v : perThread) {
+                expected.increment(v);
+            }
+        }
+        return expected;
+    }
+
+    /** Runs {@code body(threadIndex)} on {@code threads} threads released together. */
+    private static void runTogether(int threads, IntConsumer body) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<?>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                final int index = t;
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    body.accept(index);
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (Future<?> f : futures) {
+                f.get(20, TimeUnit.SECONDS); // rethrows any failure from the thread
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void concurrentWritersAreAllCounted() throws Exception {
+        long[][] inputs = writerInputs();
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+
+        runTogether(WRITERS, t -> {
+            for (long v : inputs[t]) {
+                a.increment(v);
+            }
+        });
+
+        assertEquals(expectedFrom(inputs), a.load());
+    }
+
+    @Test
+    @Timeout(30)
+    void everyCountIsReturnedByExactlyOneDrain() throws Exception {
+        long[][] inputs = writerInputs();
+        AtomicHistogram a = new AtomicHistogram(7, 64);
+        AtomicBoolean writersDone = new AtomicBoolean(false);
+        AtomicLong nonEmptyDrains = new AtomicLong();
+        AtomicReference<Throwable> drainerFailure = new AtomicReference<>();
+        Histogram[] accumulated = {new Histogram(7, 64)};
+
+        Thread drainer = new Thread(() -> {
+            try {
+                Histogram scratch = new Histogram(7, 64);
+                while (!writersDone.get()) {
+                    a.drainInto(scratch);
+                    if (scratch.totalCount() != 0) {
+                        // Proves the drainer actually overlapped a writer: a
+                        // drain of the still-empty histogram before writers
+                        // start would otherwise satisfy a weaker check.
+                        nonEmptyDrains.incrementAndGet();
+                    }
+                    accumulated[0] = accumulated[0].merge(scratch);
+                }
+            } catch (Throwable t) {
+                drainerFailure.set(t);
+            }
+        });
+        // Daemon so a failure or interruption in the writer phase below (an
+        // exception from runTogether, or the @Timeout interrupting this
+        // thread) cannot leave a non-daemon thread spinning for the rest of
+        // the Surefire JVM.
+        drainer.setDaemon(true);
+        drainer.start();
+
+        try {
+            runTogether(WRITERS, t -> {
+                for (long v : inputs[t]) {
+                    a.increment(v);
+                }
+            });
+        } finally {
+            // Always signal the drainer to stop, even if runTogether threw.
+            writersDone.set(true);
+        }
+        drainer.join(TimeUnit.SECONDS.toMillis(20));
+        assertFalse(drainer.isAlive(), "the drainer thread did not finish within 20 s");
+        assertNull(drainerFailure.get(),
+                "the drainer thread threw: " + drainerFailure.get());
+
+        Histogram total = accumulated[0].merge(a.drain());
+        assertEquals(expectedFrom(inputs), total);
+        assertEquals(new Histogram(7, 64), a.load());
+        // After writers finish, at most one further drain can be non-empty,
+        // so seeing at least 2 shows the drainer genuinely ran concurrently
+        // with the writers, not just once before or after them. A run
+        // without that overlap exercised no race, so it is reported as
+        // aborted, not failed: on a starved host the scheduler can hold the
+        // drainer back until the writers finish (about 2% of runs when pinned
+        // to one CPU).
+        assumeTrue(nonEmptyDrains.get() >= 2,
+                "inconclusive: expected at least 2 non-empty drains to show the drainer "
+                        + "overlapped with the writers, got " + nonEmptyDrains.get());
+    }
+}

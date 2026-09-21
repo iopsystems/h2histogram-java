@@ -165,9 +165,50 @@ No Rust speedup is assumed for JVM execution.
 |------|---------|
 | `Config` | Bucketing parameters; `valueToIndex`, `indexToLowerBound`/`indexToUpperBound`, `totalBuckets`, `error` |
 | `Histogram` | Dense histogram; `increment`, `record`, `recordMany`, `percentile(s)`, `merge`, `subtract`, `downsample`, `toSparse`, `toCumulative`, `fromBuckets`, `reset`, `snapshotInto`, `drainInto`, `checkedAddAssign`, `checkedSum`, `percentilesInto` |
+| `AtomicHistogram` | Lock-free concurrent recorder (crate's `AtomicHistogram`); `increment`, `record`, `load`, `loadInto`, `drain`, `drainInto`. Snapshot to a `Histogram` to query |
 | `SparseHistogram` | Columnar `(index, count)` form; `fromHistogram`, `fromParts`, `toDense`, `toCumulative`, `percentile(s)`, `percentilesInto`, `merge`, `downsample` |
 | `CumulativeHistogram` | Read-only cumulative form (crate's `CumulativeROHistogram`); binary-search `percentile(s)`, `mean`, `bucketQuantileRange`, `bucketsWithQuantiles`, `percentilesInto`, `merge`, `downsample`, `toSparse` |
 | `Bucket` | A bucket's `count` and inclusive `[start, end]` range, plus `midpoint`/`width` |
+
+## Concurrent recording
+
+`Histogram` is not thread-safe. When several threads must record into one
+shared instance, use `AtomicHistogram`, the analogue of the crate's
+`AtomicHistogram`. It only records; take a snapshot to query.
+
+```java
+import systems.iop.h2histogram.AtomicHistogram;
+import systems.iop.h2histogram.Histogram;
+
+AtomicHistogram shared = new AtomicHistogram(7, 64);
+
+// any number of threads
+shared.increment(latencyNanos);
+
+// a reporter thread, every interval
+Histogram interval = shared.drain();          // capture and reset
+Bucket p99 = interval.percentile(0.99).orElseThrow();
+
+// or reuse one snapshot buffer to avoid allocating per interval
+Histogram scratch = new Histogram(shared.config());
+shared.drainInto(scratch);
+```
+
+- Recording is lock-free: one atomic add per call.
+- `drain` captures and clears each bucket in one atomic step, so every recorded
+  count is returned by exactly one drain. None is lost or double-counted, even
+  while writers are running.
+- `load` copies without resetting. Neither `load` nor `drain` is one
+  instantaneous snapshot across all buckets; a write concurrent with a
+  snapshot may land on either side of it, bucket by bucket. If you need an
+  exact interval boundary, pause or hand off the writers yourself.
+- A snapshot returned by `load` or `drain` is an ordinary non-thread-safe
+  `Histogram`; hand it to other threads safely (for example through a queue,
+  a volatile field, or an executor). The destination passed to `loadInto` or
+  `drainInto` must be owned exclusively by the caller for the duration of the
+  call.
+- If each thread can own its histogram, one plain `Histogram` per thread,
+  merged when reporting, is faster. See [benchmarks](benchmarks/README.md).
 
 ## Unsigned values
 
