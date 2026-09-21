@@ -3,6 +3,7 @@ package systems.iop.h2histogram;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -135,6 +136,76 @@ public final class Histogram {
         }
     }
 
+    /** Clears all counts while retaining the dense counter array. Not thread-safe. */
+    public void reset() {
+        Arrays.fill(buckets, 0);
+    }
+
+    /**
+     * Replaces a compatible destination's counts with this histogram's counts.
+     * Both histograms must be exclusively owned or externally synchronized.
+     * Self-snapshot is allowed. The destination array is retained.
+     */
+    public void snapshotInto(Histogram destination) {
+        checkCompatible(destination);
+        System.arraycopy(buckets, 0, destination.buckets, 0, buckets.length);
+    }
+
+    /**
+     * Snapshots into a compatible existing destination, then resets this histogram.
+     * This is not a concurrent/atomic drain. Self-drain is rejected before mutation.
+     */
+    public void drainInto(Histogram destination) {
+        if (this == destination) {
+            throw new IllegalArgumentException("cannot drain into self");
+        }
+        snapshotInto(destination);
+        reset();
+    }
+
+    /**
+     * Adds counts in place, checking all buckets before mutation. Aliasing is allowed.
+     * Throws ArithmeticException on unsigned bucket overflow and IllegalArgumentException
+     * on incompatible configuration; either failure leaves this histogram unchanged.
+     * Requires exclusive access to both histograms throughout the operation.
+     */
+    public void checkedAddAssign(Histogram other) {
+        checkCompatible(other);
+        for (int i = 0; i < buckets.length; i++) {
+            U64.checkedAdd(buckets[i], other.buckets[i]);
+        }
+        for (int i = 0; i < buckets.length; i++) {
+            buckets[i] += other.buckets[i];
+        }
+    }
+
+    /**
+     * Returns an independent sum, checking every configuration before adding counts.
+     * The nonempty list may contain repeated histogram references. Sources are never
+     * mutated and must not be concurrently modified. Unsigned bucket overflow throws
+     * ArithmeticException; empty input or incompatible geometry throws IllegalArgumentException.
+     */
+    public static Histogram checkedSum(List<Histogram> histograms) {
+        if (histograms.isEmpty()) {
+            throw new IllegalArgumentException("cannot sum an empty list");
+        }
+        Histogram first = histograms.get(0);
+        for (Histogram histogram : histograms) {
+            first.checkCompatible(histogram);
+        }
+        Histogram result = new Histogram(first.config);
+        System.arraycopy(first.buckets, 0, result.buckets, 0, first.buckets.length);
+        Iterator<Histogram> remaining = histograms.iterator();
+        remaining.next();
+        while (remaining.hasNext()) {
+            Histogram histogram = remaining.next();
+            for (int i = 0; i < result.buckets.length; i++) {
+                result.buckets[i] = U64.checkedAdd(result.buckets[i], histogram.buckets[i]);
+            }
+        }
+        return result;
+    }
+
     // Bucket iteration ------------------------------------------------------
 
     private Bucket bucketAt(int index) {
@@ -234,13 +305,46 @@ public final class Histogram {
      * fractional convention as the Rust crate: 0.5 is the median.
      *
      * @throws IllegalArgumentException if the percentile is out of range
+     * @throws ArithmeticException if the total exceeds unsigned 64-bit range
      */
     public Optional<Bucket> percentile(double percentile) {
-        List<PercentileResult> results = percentiles(percentile);
-        if (results.isEmpty()) {
-            return Optional.empty();
+        U64.validatePercentile(percentile);
+        long total = U64.checkedTotal(buckets);
+        return total == 0 ? Optional.empty() : Optional.of(percentileBucket(percentile, total));
+    }
+
+    private Bucket percentileBucket(double percentile, long total) {
+        long target = U64.ceilCount(percentile, total);
+        long running = 0;
+        for (int i = 0; i < buckets.length; i++) {
+            running += buckets[i];
+            if (Long.compareUnsigned(running, target) >= 0) {
+                return bucketAt(i);
+            }
         }
-        return Optional.of(results.get(0).bucket());
+        throw new IllegalStateException("count changed during query");
+    }
+
+    /**
+     * Writes buckets in request order into caller storage and returns the number written.
+     * Empty histograms return zero and leave output untouched; unused output entries
+     * are untouched. Validates all requests and capacity before writing. Bucket objects
+     * are still created. Each request scans counts; no batch request/result containers
+     * are constructed. Unsigned total overflow throws ArithmeticException.
+     */
+    public int percentilesInto(double[] percentiles, Bucket[] output) {
+        U64.validateOutput(percentiles, output);
+        if (percentiles.length == 0) {
+            return 0;
+        }
+        long total = U64.checkedTotal(buckets);
+        if (total == 0) {
+            return 0;
+        }
+        for (int i = 0; i < percentiles.length; i++) {
+            output[i] = percentileBucket(percentiles[i], total);
+        }
+        return percentiles.length;
     }
 
     /**
@@ -250,6 +354,7 @@ public final class Histogram {
      * the algorithm used by the Rust crate.
      *
      * @throws IllegalArgumentException if any percentile is out of range
+     * @throws ArithmeticException if the total exceeds unsigned 64-bit range
      */
     public List<PercentileResult> percentiles(double... percentiles) {
         for (double p : percentiles) {
@@ -259,7 +364,10 @@ public final class Histogram {
             }
         }
 
-        long total = totalCount();
+        if (percentiles.length == 0) {
+            return List.of();
+        }
+        long total = U64.checkedTotal(buckets);
         if (total == 0) {
             return List.of();
         }
