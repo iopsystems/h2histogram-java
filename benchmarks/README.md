@@ -176,12 +176,25 @@ intervals, consistent with contention itself being noisy.
 | gp7 | all | 8 | 11.67 | 1.84 |
 
 These are measurements from one host and one run, so treat them as
-indicative of shape, not precise multipliers. The one-thread rows price the
-atomic add itself with no contention, and it is not negligible: `sharedAtomic`
-costs 2.5x to 13x what `perThreadPlain` costs at one thread, depending on the
-cell, and the gap is largest exactly where the plain path is cheapest
-(`gp7`/`few`, where `perThreadPlain`'s linear fast path is ~0.41 ns/op but
-`sharedAtomic` is still ~5.39 ns/op). Above one thread, `sharedAtomic` grows
+indicative of shape, not precise multipliers. The one-thread rows measure
+per-operation throughput of a tight loop of 65,536 increments with no
+contention, and the gap there is not negligible: `sharedAtomic` costs 2.5x to
+13x what `perThreadPlain` costs at one thread, depending on the cell, and the
+gap is largest exactly where the plain path is cheapest (`gp7`/`few`, where
+`perThreadPlain`'s linear fast path is ~0.41 ns/op but `sharedAtomic` is
+still ~5.39 ns/op). This gap is not a clean price of the atomic instruction
+itself: `Histogram.increment` is a plain `buckets[idx] += count`, and a loop
+of independent, data-dependent-indexed increments like that can overlap
+across iterations on an out-of-order core, while `AtomicHistogram.increment`
+is a serializing read-modify-write that cannot overlap the same way even
+when uncontended — the ~0.41 ns/op plain score at `gp7`/`few` (roughly one
+CPU cycle) is itself only reachable with that cross-iteration overlap, so
+some of the measured gap is lost instruction-level parallelism rather than
+the atomic op's own cost, and this benchmark cannot separate the two. It is
+still the relevant comparison for a real recording loop, but an isolated
+single increment, run once rather than in a tight loop, would likely show a
+smaller ratio than the tight loop does here — we did not measure that case.
+Above one thread, `sharedAtomic` grows
 substantially faster than thread count at `spread=few` (about 19x from 1 to 8
 threads at `gp3`, about 40x at `gp7`), consistent with contention on a
 64-bucket target shared by every thread. At `spread=all`, where writes land
