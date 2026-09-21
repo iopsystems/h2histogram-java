@@ -44,6 +44,11 @@ Useful options: `-p precision=gp7 -p spread=all` to run a single cell,
 `-prof perfnorm` for per-op cache-miss counters (Linux), `-rf json` for
 machine-readable output.
 
+The compiler plugin declares `jmh-generator-annprocess` explicitly via
+`annotationProcessorPaths`, because JDK 23+ no longer runs annotation
+processors that are only on the classpath, and without it JMH's benchmark
+list would not be generated.
+
 ## Results
 
 Single-threaded, average time per recorded value (lower is better). Measured
@@ -82,7 +87,6 @@ Observations:
   linear and logarithmic paths and pays for branch misprediction, while at
   `all` the branch becomes predictable-enough again and h2histogram pulls ahead.
 
-
 ## Reporting and analytics phases
 
 `ReportingBenchmark` is separate from the existing `RecordBenchmark`; the historical
@@ -120,3 +124,79 @@ JMH consumes returned results. Java reclamation is asynchronous; `-prof gc` repo
 allocation and collection effects rather than a separately timed destructor. Use
 multiple forks and normal warmup/measurement durations for conclusions. Array reuse
 is not an allocation-free guarantee and no port-specific speedup is claimed here.
+
+## Concurrent recording: shared atomic versus per-thread
+
+`AtomicRecordBenchmark` compares recording into one shared `AtomicHistogram`
+against one plain `Histogram` per thread, at 1, 2, 4 and 8 threads.
+
+```bash
+java -jar target/benchmarks.jar AtomicRecordBenchmark -t 4
+```
+
+`spread=few` aims every thread at the same 64 buckets, the worst case for a
+shared histogram. `spread=all` spreads writes over every bucket (488 buckets
+at `gp3`, 7296 at `gp7`, for the `Config(groupingPower, 63)` used here).
+Scores are average ns per `increment`, per thread; lower is better.
+
+Environment: `13th Gen Intel(R) Core(TM) i5-13500H`, 16 hardware threads,
+`openjdk version "25.0.4" 2026-07-21`, JMH 1.37, 3 x 1 s warmup, 5 x 1 s
+measurement, 1 fork. This is a laptop, not a benchmark host: it is a hybrid
+part (4 performance cores / 8 threads, plus 8 efficiency cores / 8 threads,
+16 threads total), so at `-t 8` some benchmark threads may land on efficiency
+cores and the per-thread average mixes two core types; no CPU pinning was
+used. The machine was under light background load during the run (1-minute
+load average moved between roughly 0.8 and 3.3 across the sweep, driven
+mostly by the sweep's own prior runs decaying between measurements) with the
+default frequency governor. These are single-host, single-run measurements;
+treat absolute values as indicative, not reproducible to the last digit.
+`Score Error (99.9%)` from the raw CSVs (not reproduced here) is small
+relative to the scores for nearly every cell, so the trends below are not
+noise artifacts, with the caveat that a few `gp3`/`few` and `gp7`/`few` cells
+at 4 and 8 threads have wider (but still small relative to score) confidence
+intervals, consistent with contention itself being noisy.
+
+| Precision | Spread | Threads | shared `AtomicHistogram` | per-thread `Histogram` |
+|---|---|---:|---:|---:|
+| gp3 | few | 1 | 6.27 | 2.47 |
+| gp3 | few | 2 | 25.08 | 2.48 |
+| gp3 | few | 4 | 55.49 | 2.65 |
+| gp3 | few | 8 | 121.42 | 3.11 |
+| gp3 | all | 1 | 5.90 | 1.29 |
+| gp3 | all | 2 | 12.09 | 1.32 |
+| gp3 | all | 4 | 24.01 | 1.36 |
+| gp3 | all | 8 | 39.25 | 1.67 |
+| gp7 | few | 1 | 5.39 | 0.41 |
+| gp7 | few | 2 | 27.00 | 0.43 |
+| gp7 | few | 4 | 55.62 | 0.43 |
+| gp7 | few | 8 | 215.26 | 0.53 |
+| gp7 | all | 1 | 6.01 | 1.35 |
+| gp7 | all | 2 | 7.44 | 1.35 |
+| gp7 | all | 4 | 8.53 | 1.41 |
+| gp7 | all | 8 | 11.67 | 1.84 |
+
+These are measurements from one host and one run, so treat them as
+indicative of shape, not precise multipliers. The one-thread rows price the
+atomic add itself with no contention, and it is not negligible: `sharedAtomic`
+costs 2.5x to 13x what `perThreadPlain` costs at one thread, depending on the
+cell, and the gap is largest exactly where the plain path is cheapest
+(`gp7`/`few`, where `perThreadPlain`'s linear fast path is ~0.41 ns/op but
+`sharedAtomic` is still ~5.39 ns/op). Above one thread, `sharedAtomic` grows
+substantially faster than thread count at `spread=few` (about 19x from 1 to 8
+threads at `gp3`, about 40x at `gp7`), consistent with contention on a
+64-bucket target shared by every thread. At `spread=all`, where writes land
+across many more distinct buckets (488 at `gp3`, 7296 at `gp7`),
+`sharedAtomic` still grows with thread count but far less steeply (about 6.6x
+at `gp3`, about 1.9x at `gp7`), and the largest bucket count (`gp7`/`all`)
+shows the smallest growth of any cell — consistent with more buckets diluting
+contention, though a throughput benchmark like this cannot distinguish
+memory-level contention from cache-line (false) sharing between neighbouring
+counters. `perThreadPlain` stays far flatter across the sweep (roughly
+1.26x-1.36x from 1 to 8 threads in every cell) but is not perfectly flat
+either, which is consistent with general memory-bandwidth or scheduling
+pressure from running more concurrent threads rather than with any data
+sharing, since each thread's `Histogram` is private. Use `AtomicHistogram`
+when writers must share an instance; prefer one `Histogram` per writer,
+merged at report time, when they need not — the gap between the two grows
+with thread count and is already substantial at just two threads whenever
+`spread=few` applies.
