@@ -24,9 +24,12 @@ import systems.iop.h2histogram.Histogram;
  * against the alternative of one plain {@link Histogram} per thread.
  *
  * <p>Run with {@code -t 1}, {@code -t 2}, {@code -t 4}, {@code -t 8}. At one
- * thread the two benchmarks price the atomic add against a plain add with no
- * contention. At higher counts {@code sharedAtomic} shows contention and false
- * sharing while {@code perThreadPlain} shows what writer ownership buys.
+ * thread the two benchmarks are the uncontended tight-loop comparison, and
+ * that gap includes lost instruction-level parallelism as well as the atomic
+ * operation's own cost. At higher thread counts {@code sharedAtomic} shows
+ * the cost of sharing (contention and/or false sharing; this benchmark
+ * cannot separate them) while {@code perThreadPlain} shows what writer
+ * ownership buys.
  *
  * <p>{@code spread=few} aims every thread at the same 64 buckets, which is the
  * worst case for a shared histogram. {@code spread=all} spreads writes over

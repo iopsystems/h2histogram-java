@@ -152,9 +152,14 @@ default frequency governor. These are single-host, single-run measurements;
 treat absolute values as indicative, not reproducible to the last digit.
 `Score Error (99.9%)` from the raw CSVs (not reproduced here) is small
 relative to the scores for nearly every cell, so the trends below are not
-noise artifacts, with the caveat that a few `gp3`/`few` and `gp7`/`few` cells
-at 4 and 8 threads have wider (but still small relative to score) confidence
-intervals, consistent with contention itself being noisy.
+noise artifacts. The largest relative errors (Score Error ÷ Score) all belong
+to the uncontended `perThreadPlain` side: `gp3`/`few` at 4 threads (~24%),
+`gp7`/`all` at 2 threads (~14%), `gp3`/`all` at 2 threads (~13%), and
+`gp7`/`few` at 8 threads (~8.6%). Every `sharedAtomic` cell stays at or below
+~7.3%. These are all sub-3 ns/op scores, where a small absolute jitter is a
+large fraction of the score. None of this affects the conclusions below: the
+gaps between `sharedAtomic` and `perThreadPlain` are far larger than this
+noise at every thread count.
 
 | Precision | Spread | Threads | shared `AtomicHistogram` | per-thread `Histogram` |
 |---|---|---:|---:|---:|
@@ -183,17 +188,18 @@ contention, and the gap there is not negligible: `sharedAtomic` costs 2.5x to
 gap is largest exactly where the plain path is cheapest (`gp7`/`few`, where
 `perThreadPlain`'s linear fast path is ~0.41 ns/op but `sharedAtomic` is
 still ~5.39 ns/op). This gap is not a clean price of the atomic instruction
-itself: `Histogram.increment` is a plain `buckets[idx] += count`, and a loop
-of independent, data-dependent-indexed increments like that can overlap
-across iterations on an out-of-order core, while `AtomicHistogram.increment`
-is a serializing read-modify-write that cannot overlap the same way even
-when uncontended — the ~0.41 ns/op plain score at `gp7`/`few` (roughly one
-CPU cycle) is itself only reachable with that cross-iteration overlap, so
-some of the measured gap is lost instruction-level parallelism rather than
-the atomic op's own cost, and this benchmark cannot separate the two. It is
-still the relevant comparison for a real recording loop, but an isolated
-single increment, run once rather than in a tight loop, would likely show a
-smaller ratio than the tight loop does here — we did not measure that case.
+itself. `Histogram.increment` is a plain `buckets[idx] += count`, and a loop
+of mostly independent, data-dependent-indexed increments like that can
+overlap across iterations on an out-of-order core. `AtomicHistogram.increment`,
+in contrast, is a serializing read-modify-write that cannot overlap the same
+way even when uncontended. The ~0.41 ns/op plain score at `gp7`/`few`
+(roughly one CPU cycle) is itself only reachable with that cross-iteration
+overlap, so some of the measured gap is lost instruction-level parallelism
+rather than the atomic op's own cost — and this benchmark cannot separate
+the two. It is still the relevant comparison for a real recording loop, but
+an isolated single increment, run once rather than in a tight loop, would
+likely show a smaller ratio than the tight loop does here — we did not
+measure that case.
 Above one thread, `sharedAtomic` grows
 substantially faster than thread count at `spread=few` (about 19x from 1 to 8
 threads at `gp3`, about 40x at `gp7`), consistent with contention on a
