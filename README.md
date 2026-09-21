@@ -202,6 +202,11 @@ shared.drainInto(scratch);
   instantaneous snapshot across all buckets; a write concurrent with a
   snapshot may land on either side of it, bucket by bucket. If you need an
   exact interval boundary, pause or hand off the writers yourself.
+- A snapshot returned by `load` or `drain` is an ordinary non-thread-safe
+  `Histogram`; hand it to other threads safely (for example through a queue,
+  a volatile field, or an executor). The destination passed to `loadInto` or
+  `drainInto` must be owned exclusively by the caller for the duration of the
+  call.
 - If each thread can own its histogram, one plain `Histogram` per thread,
   merged when reporting, is faster. See [benchmarks](benchmarks/README.md).
 

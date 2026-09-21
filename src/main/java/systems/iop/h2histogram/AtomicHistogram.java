@@ -14,7 +14,9 @@ import java.util.concurrent.atomic.AtomicLongArray;
  * <h2>Concurrency contract</h2>
  *
  * <ul>
- *   <li>Every method is safe to call from any thread at any time.
+ *   <li>Every method is safe to call from any thread at any time, subject to
+ *       the destination-ownership rule on {@link #loadInto(Histogram)} and
+ *       {@link #drainInto(Histogram)}.
  *   <li>{@link #increment(long)} and {@link #record(long, long)} are lock-free:
  *       one atomic add on one counter. No total, minimum or maximum is cached.
  *   <li>{@link #load()} and {@link #loadInto(Histogram)} read each bucket
@@ -23,6 +25,9 @@ import java.util.concurrent.atomic.AtomicLongArray;
  *   <li>{@link #drain()} and {@link #drainInto(Histogram)} capture and clear
  *       each bucket in one atomic step. Every recorded count is returned by
  *       exactly one drain: none is lost and none is returned twice.
+ *   <li>{@link #load()} and {@link #drain()} return an ordinary non-thread-safe
+ *       {@link Histogram}; publish it to other threads safely (for example
+ *       through a queue, a volatile field, or an executor).
  * </ul>
  *
  * <p>There is no instantaneous boundary across buckets. An exact interval
@@ -51,7 +56,11 @@ public final class AtomicHistogram {
         this(new Config(groupingPower, maxValuePower));
     }
 
-    /** Creates an empty atomic histogram from an existing {@link Config}. */
+    /**
+     * Creates an empty atomic histogram from an existing {@link Config}.
+     *
+     * @throws NullPointerException if config is null
+     */
     public AtomicHistogram(Config config) {
         this.config = Objects.requireNonNull(config, "config");
         this.buckets = new AtomicLongArray(config.totalBuckets());
@@ -82,7 +91,13 @@ public final class AtomicHistogram {
         buckets.getAndAdd(config.valueToIndex(value), count);
     }
 
-    /** Copies the current bucket values into a new {@link Histogram}. */
+    /**
+     * Copies the current bucket values into a new {@link Histogram}.
+     *
+     * <p>The returned {@link Histogram} is an ordinary non-thread-safe object;
+     * publish it to other threads safely (for example through a queue, a
+     * volatile field, or an executor).
+     */
     public Histogram load() {
         Histogram snapshot = new Histogram(config);
         loadInto(snapshot);
@@ -96,10 +111,15 @@ public final class AtomicHistogram {
      *
      * @throws IllegalArgumentException if the configurations differ; neither
      *     histogram is changed
+     * @throws NullPointerException if destination is null
      */
     public void loadInto(Histogram destination) {
         long[] out = checkedDestination(destination);
         for (int i = 0; i < out.length; i++) {
+            // getAcquire is an opaque read, atomic for a long, that sees any
+            // write that happens-before it. The contract does not promise a
+            // fresher read than that, so this must not be "fixed" to a plain
+            // read, and a volatile get is not needed.
             out[i] = buckets.getAcquire(i);
         }
     }
@@ -107,6 +127,10 @@ public final class AtomicHistogram {
     /**
      * Captures the current bucket values into a new {@link Histogram} and
      * resets this histogram to zero.
+     *
+     * <p>The returned {@link Histogram} is an ordinary non-thread-safe object;
+     * publish it to other threads safely (for example through a queue, a
+     * volatile field, or an executor).
      */
     public Histogram drain() {
         Histogram snapshot = new Histogram(config);
@@ -127,6 +151,7 @@ public final class AtomicHistogram {
      *
      * @throws IllegalArgumentException if the configurations differ; neither
      *     histogram is changed
+     * @throws NullPointerException if destination is null
      */
     public void drainInto(Histogram destination) {
         long[] out = checkedDestination(destination);
